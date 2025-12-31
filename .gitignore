@@ -77,3 +77,6 @@ memory-bank
 
 # Claude Code
 CLAUDE.md
+
+.prod.secrets.env
+prod-data/

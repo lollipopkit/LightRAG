@@ -1,0 +1,90 @@
+services:
+  lightrag:
+    container_name: lightrag-prod
+    image: ghcr.io/hkuds/lightrag:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      tags:
+        - ghcr.io/hkuds/lightrag:latest
+    ports:
+      - "${PORT:-9621}:9621"
+    cpus: "${LIGHTRAG_CPUS:-2}"
+    mem_limit: "${LIGHTRAG_MEM_LIMIT:-6g}"
+    pids_limit: ${LIGHTRAG_PIDS_LIMIT:-1024}
+    volumes:
+      - ./prod-data/rag_storage:/app/data/rag_storage_prod
+      - ./prod-data/inputs:/app/data/inputs
+      - ./config.ini:/app/config.ini
+      - ./.prod.env:/app/.env
+    env_file:
+      - .prod.env
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:9621/health', timeout=2).read()\" >/dev/null 2>&1 || python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:9621/health', timeout=2).read()\" >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    container_name: lightrag-redis
+    image: redis:7-alpine
+    cpus: "${REDIS_CPUS:-0.5}"
+    mem_limit: "${REDIS_MEM_LIMIT:-512m}"
+    pids_limit: ${REDIS_PIDS_LIMIT:-256}
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ./prod-data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  qdrant:
+    container_name: lightrag-qdrant
+    image: qdrant/qdrant:latest
+    cpus: "${QDRANT_CPUS:-1}"
+    mem_limit: "${QDRANT_MEM_LIMIT:-2g}"
+    pids_limit: ${QDRANT_PIDS_LIMIT:-512}
+    restart: unless-stopped
+    volumes:
+      - ./prod-data/qdrant:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "(wget -q --spider http://localhost:6333/readyz || wget -q --spider http://localhost:6333/) || (curl -fsS http://localhost:6333/readyz >/dev/null || curl -fsS http://localhost:6333/ >/dev/null)"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  neo4j:
+    container_name: lightrag-neo4j
+    image: neo4j:5
+    cpus: "${NEO4J_CPUS:-2}"
+    mem_limit: "${NEO4J_MEM_LIMIT:-4g}"
+    pids_limit: ${NEO4J_PIDS_LIMIT:-1024}
+    restart: unless-stopped
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-CHANGE_ME}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-CHANGE_ME}
+    volumes:
+      - ./prod-data/neo4j/data:/data
+      - ./prod-data/neo4j/logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$NEO4J_PASSWORD\" 'RETURN 1' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 40s
